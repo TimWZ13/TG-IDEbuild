@@ -1,0 +1,39 @@
+name: Build LocalCoderIDE macOS App & DMG
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # 支持手动点击运行
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      APP_NAME: LocalCoderIDE
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Build Swift Package (universal arm64 + x86_64 release)
+        run: swift build --configuration release --arch arm64 --arch x86_64
+
+      - name: Prepare .app bundle folder
+        run: |
+          mkdir -p ${{ env.APP_NAME }}.app/Contents/MacOS
+          mkdir -p ${{ env.APP_NAME }}.app/Contents/Resources
+          cp .build/release/${{ env.APP_NAME }} ${{ env.APP_NAME }}.app/Contents/MacOS/
+
+      - name: Copy Resources (Privacy.plist)
+        run: cp Sources/LocalCoderIDE/Resources/Privacy.plist ${{ env.APP_NAME }}.app/Contents/Resources/
+
+      - name: Build DMG (拖拽安装样式)
+        run: |
+          hdiutil create -volname "${{ env.APP_NAME }}" -srcfolder ./${{ env.APP_NAME }}.app -ov -format UDZO ./${{ env.APP_NAME }}.dmg
+
+      - name: Upload App + DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: LocalCoderIDE-macos-build
+          path: |
+            ./${{ env.APP_NAME }}.app
+            ./${{ env.APP_NAME }}.dmg
