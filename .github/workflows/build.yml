@@ -1,0 +1,140 @@
+# TG IDE · GitHub Actions
+# © 2026 Trigin. All rights reserved.
+name: Build TG IDE macOS App & DMG
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      APP_NAME: TGIDE
+      DISPLAY_NAME: "TG IDE"
+      BUNDLE_ID: com.trigin.TGIDE
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ── 1. 先编 llama.cpp（Metal + universal） ──────────────────
+      # 用户旧 yml 缺这步 → library not found for -lllama，已修复
+      - name: Clone llama.cpp
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git \
+            ${{ github.workspace }}/.deps/llama.cpp
+
+      - name: Build llama.cpp (Metal, universal)
+        run: |
+          LLAMA_DIR="${{ github.workspace }}/.deps/llama.cpp"
+          BUILD_DIR="$LLAMA_DIR/build"
+          cmake -S "$LLAMA_DIR" -B "$BUILD_DIR" \
+            -DLLAMA_METAL=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          cmake --build "$BUILD_DIR" --config Release \
+            -j$(sysctl -n hw.ncpu)
+
+      - name: Prepare libllama.a & headers
+        run: |
+          mkdir -p .build/llama
+          # 兼容 llama.cpp 不同版本的 cmake 输出
+          if [ -f "${{ github.workspace }}/.deps/llama.cpp/build/libllama.a" ]; then
+            cp "${{ github.workspace }}/.deps/llama.cpp/build/libllama.a" \
+               .build/llama/libllama.a
+          else
+            libtool -static -o .build/llama/libllama.a \
+              ${{ github.workspace }}/.deps/llama.cpp/build/llama/libllama.a \
+              ${{ github.workspace }}/.deps/llama.cpp/build/ggml/src/libggml.a \
+              ${{ github.workspace }}/.deps/llama.cpp/build/ggml/src/ggml-common/libggml-common.a \
+              2>/dev/null || true
+          fi
+          # 覆盖占位头 → 官方 llama.h（dummy.c 保证 Cllama target 能编出对象文件）
+          cp ${{ github.workspace }}/.deps/llama.cpp/include/llama.h \
+             Sources/Cllama/Include/llama.h
+
+      # ── 2. Swift build（universal release） ────────────────────
+      - name: Build Swift Package (universal arm64 + x86_64 release)
+        run: swift build --configuration release --arch arm64 --arch x86_64
+
+      # ── 3. 组装 .app bundle ──────────────────────────────────────
+      # 通用产物在 .build/apple/Products/Release/TGIDE（Xcode backend 路径）
+      - name: Prepare .app bundle folder
+        run: |
+          APP="./${{ env.APP_NAME }}.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+          cp .build/apple/Products/Release/${{ env.APP_NAME }} \
+             "$APP/Contents/MacOS/${{ env.APP_NAME }}"
+
+      - name: Write Info.plist
+        run: |
+          APP="./${{ env.APP_NAME }}.app"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>TG IDE</string>
+              <key>CFBundleDisplayName</key>
+              <string>TG IDE</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.trigin.TGIDE</string>
+              <key>CFBundleVersion</key>
+              <string>${{ github.run_number }}</string>
+              <key>CFBundleShortVersionString</key>
+              <string>0.3.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleExecutable</key>
+              <string>TGIDE</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>14.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>NSHumanReadableCopyright</key>
+              <string>© 2026 Trigin. All rights reserved.</string>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Copy Resources (Privacy.plist + AppIcon)
+        run: |
+          APP="./${{ env.APP_NAME }}.app"
+          cp Sources/TGIDE/Resources/Privacy.plist \
+             "$APP/Contents/Resources/"
+          iconutil -c icns Sources/TGIDE/Resources/AppIcon.appiconset \
+            -o "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null || \
+          cp Sources/TGIDE/Resources/AppIcon.appiconset/icon_1024.png \
+             "$APP/Contents/Resources/AppIcon.icns"
+
+      - name: Ad-hoc codesign
+        run: |
+          codesign --force --deep --sign - "./${{ env.APP_NAME }}.app" \
+            2>/dev/null || true
+
+      # ── 4. DMG ──────────────────────────────────────────────────
+      # 用 hdiutil 保持和用户旧 yml 一致；不额外装 create-dmg
+      - name: Build DMG (拖拽安装样式)
+        run: |
+          hdiutil create \
+            -volname "${{ env.DISPLAY_NAME }}" \
+            -srcfolder "./${{ env.APP_NAME }}.app" \
+            -ov \
+            -format UDZO \
+            "./${{ env.APP_NAME }}.dmg"
+
+      - name: Upload App + DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: TGIDE-macos-universal
+          path: |
+            ./${{ env.APP_NAME }}.app
+            ./${{ env.APP_NAME }}.dmg
