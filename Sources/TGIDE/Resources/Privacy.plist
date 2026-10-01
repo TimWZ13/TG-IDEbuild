@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Privacy.plist
+  TG IDE · © 2026 Trigin. All rights reserved.
+  当前版本不访问任何隐私敏感资源。
+-->
+<plist version="1.0">
+<dict>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Trigin. All rights reserved.</string>
+</dict>
+</plist>

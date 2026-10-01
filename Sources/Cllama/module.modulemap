@@ -1,0 +1,14 @@
+// Cllama — Swift 可见 modulemap
+// 构建时会同时把 llama.h / ggml*.h 覆盖到 Include/
+framework module Cllama {
+    umbrella header "llama.h"
+    header "llama.h"
+    header "ggml.h"
+    header "ggml-cpu.h"
+    header "ggml-metal.h"
+    header "ggml-alloc.h"
+    header "ggml-backend.h"
+    header "ggml-quants.h"
+    export *
+    link "llama"
+}
